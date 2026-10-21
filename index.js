@@ -2,7 +2,6 @@
 // MUSICDROP BOT — ULTRA PRO FINAL SAFE
 // + ADMIN PANEL PRO
 // + COLOR PALETTE
-// + VINTED MONITOR PL
 // =====================================
 
 let lastScrape = Date.now();
@@ -15,7 +14,6 @@ function updateScrapeTimestamp() {
 const fs = require("fs");
 const path = require("path");
 const cron = require("node-cron");
-const axios = require("axios");
 
 // --------- DISCORD.JS 14 --------------
 const {
@@ -33,8 +31,7 @@ const {
   ButtonStyle,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle,
-  ChannelType
+  TextInputStyle
 } = require("discord.js");
 
 // --------- UTILS -----------------------
@@ -47,7 +44,8 @@ const { isSpecial, parsePrice, formatPrice } = require("./utils/helpers");
 // KONFIGURACJA
 // =====================================
 
-const { DISCORD_TOKEN } = require("./config.json");
+const config = require("./config.json");
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN || config.DISCORD_TOKEN;
 
 if (!DISCORD_TOKEN) {
   console.error("❌ Brak DISCORD_TOKEN w config.json");
@@ -59,7 +57,6 @@ const CHECK_INTERVAL_MINUTES = 5;
 const DISCORD_INVITE = "https://discord.gg/bnTQejcg";
 const LOG_CHANNEL_ID = "1489800618515366032";
 const ADMIN_ID = "321304868264476673";
-const DEFAULT_VINTED_CHANNEL_ID = "1512255360927400048";
 
 // =====================================
 // ANTI-CRASH
@@ -94,9 +91,6 @@ const FILE_ARTISTS = path.join(DATA_DIR, "artists.json");
 const FILE_KEYWORDS = path.join(DATA_DIR, "special_keywords.json");
 const FILE_HISTORY = path.join(DATA_DIR, "event_history.json");
 
-const FILE_VINTED_SETTINGS = path.join(DATA_DIR, "vinted_settings.json");
-const FILE_VINTED_WATCH = path.join(DATA_DIR, "vinted_watch.json");
-const FILE_VINTED_SEEN = path.join(DATA_DIR, "vinted_seen.json");
 
 // =====================================
 // ARTYŚCI
@@ -147,10 +141,30 @@ const DEFAULT_ARTISTS = {
     channelId: "1512088884153028698",
     slugs: ["demi-lovato"],
     roleId: null
+  },
+  "Madison Beer": {
+    channelId: "1491156834088779797",
+    slugs: ["madison-beer"],
+    roleId: null
+  },
+  "Dove Cameron": {
+    channelId: "1491156879043203182",
+    slugs: ["dove-cameron"],
+    roleId: null
+  },
+  "Faouzia": {
+    channelId: "1562491647655157840",
+    slugs: ["faouzia"],
+    roleId: null
+  },
+  "Bella Poarch": {
+    channelId: "1562491898026000525",
+    slugs: ["bella-poarch"],
+    roleId: null
   }
 };
 
-let ARTISTS = loadJSON(FILE_ARTISTS, DEFAULT_ARTISTS);
+let ARTISTS = { ...DEFAULT_ARTISTS, ...loadJSON(FILE_ARTISTS, DEFAULT_ARTISTS) };
 saveJSON(FILE_ARTISTS, ARTISTS);
 
 // =====================================
@@ -281,22 +295,6 @@ let SETTINGS = loadJSON(FILE_SETTINGS, {
 saveJSON(FILE_SETTINGS, SETTINGS);
 
 // =====================================
-// VINTED SETTINGS
-// =====================================
-
-let VINTED_SETTINGS = loadJSON(FILE_VINTED_SETTINGS, {
-  enabled: true,
-  intervalMs: 5 * 60 * 1000,
-  defaultChannelId: DEFAULT_VINTED_CHANNEL_ID,
-  firstRunDone: false
-});
-
-let VINTED_WATCH = loadJSON(FILE_VINTED_WATCH, []);
-let VINTED_SEEN = new Set(loadJSON(FILE_VINTED_SEEN, []));
-
-saveJSON(FILE_VINTED_SETTINGS, VINTED_SETTINGS);
-saveJSON(FILE_VINTED_WATCH, VINTED_WATCH);
-saveJSON(FILE_VINTED_SEEN, [...VINTED_SEEN]);
 
 // =====================================
 // PAMIĘĆ
@@ -466,12 +464,6 @@ function productIsSpecial(name) {
 
 function getEmbedColor() {
   return typeof THEME.color === "number" ? THEME.color : DEFAULT_THEME.color;
-}
-
-function parseNumberMaybe(value) {
-  if (value === null || value === undefined || value === "") return null;
-  const n = Number(String(value).replace(",", "."));
-  return Number.isFinite(n) ? n : null;
 }
 
 function parseTimeText(input) {
@@ -814,278 +806,6 @@ async function runCheck(client) {
 }
 
 // =====================================
-// VINTED MONITOR
-// =====================================
-
-function normalizeVintedWatch(watch) {
-  return {
-    id: watch.id || Date.now(),
-    name: watch.name || watch.szukaj || watch.query || "Obserwacja Vinted",
-    query: watch.query || watch.szukaj || watch.name || "",
-    minPrice: parseNumberMaybe(watch.minPrice),
-    maxPrice: parseNumberMaybe(watch.maxPrice),
-    country: watch.country || "Polska",
-    category: watch.category || "",
-    channelId: watch.channelId || VINTED_SETTINGS.defaultChannelId || DEFAULT_VINTED_CHANNEL_ID,
-    enabled: watch.enabled !== false,
-    createdAt: watch.createdAt || new Date().toISOString()
-  };
-}
-
-function saveVintedAll() {
-  saveJSON(FILE_VINTED_SETTINGS, VINTED_SETTINGS);
-  saveJSON(FILE_VINTED_WATCH, VINTED_WATCH);
-  saveJSON(FILE_VINTED_SEEN, [...VINTED_SEEN]);
-}
-
-function buildVintedUrl(watch) {
-  const params = new URLSearchParams();
-
-  params.set("search_text", watch.query);
-  params.set("order", "newest_first");
-  params.set("per_page", "24");
-  params.set("page", "1");
-
-  if (watch.minPrice !== null && watch.minPrice !== undefined) {
-    params.set("price_from", String(watch.minPrice));
-  }
-
-  if (watch.maxPrice !== null && watch.maxPrice !== undefined) {
-    params.set("price_to", String(watch.maxPrice));
-  }
-
-  return `https://www.vinted.pl/api/v2/catalog/items?${params.toString()}`;
-}
-
-function itemPriceToNumber(item) {
-  const price = item?.price;
-
-  if (typeof price === "number") return price;
-
-  if (typeof price === "string") {
-    return parseNumberMaybe(price);
-  }
-
-  if (price && typeof price === "object") {
-    return parseNumberMaybe(price.amount || price.value || price.price);
-  }
-
-  return null;
-}
-
-function itemPriceToText(item) {
-  const price = item?.price;
-
-  if (typeof price === "string") return price;
-
-  if (typeof price === "number") return `${price} zł`;
-
-  if (price && typeof price === "object") {
-    const amount = price.amount || price.value || price.price || "";
-    const currency = price.currency_code || price.currency || "PLN";
-    return `${amount} ${currency}`;
-  }
-
-  return "brak ceny";
-}
-
-function vintedItemUrl(item) {
-  if (item?.url) return item.url;
-  if (item?.id) return `https://www.vinted.pl/items/${item.id}`;
-  return "https://www.vinted.pl/";
-}
-
-function vintedItemImage(item) {
-  if (item?.photo?.url) return item.photo.url;
-  if (item?.photo?.thumbnails?.length) return item.photo.thumbnails[0].url;
-  if (item?.photos?.[0]?.url) return item.photos[0].url;
-  return "";
-}
-
-function vintedItemId(item) {
-  return String(item?.id || item?.url || item?.title || Math.random());
-}
-
-function passVintedLocalFilters(item, watch) {
-  const title = normalizeText(item?.title || "");
-  const description = normalizeText(item?.description || "");
-  const queryWords = normalizeText(watch.query).split(/\s+/).filter(Boolean);
-
-  const hasWords = queryWords.every(word => title.includes(word) || description.includes(word));
-
-  if (!hasWords) return false;
-
-  const price = itemPriceToNumber(item);
-
-  if (watch.minPrice !== null && watch.minPrice !== undefined && price !== null && price < watch.minPrice) return false;
-  if (watch.maxPrice !== null && watch.maxPrice !== undefined && price !== null && price > watch.maxPrice) return false;
-
-  if (watch.category) {
-    const hay = normalizeText(`${item?.title || ""} ${item?.catalog_title || ""} ${item?.catalog?.title || ""}`);
-    if (!hay.includes(normalizeText(watch.category))) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-async function fetchVintedItems(watch) {
-  const url = buildVintedUrl(watch);
-
-  const res = await axios.get(url, {
-    timeout: 20000,
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-      "Accept": "application/json,text/plain,*/*",
-      "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7",
-      "Referer": "https://www.vinted.pl/"
-    }
-  });
-
-  const items = res?.data?.items || res?.data?.catalog_items || [];
-
-  return items.filter(item => passVintedLocalFilters(item, watch));
-}
-
-async function sendVintedAlert(watch, item) {
-  const channel = await safeChannelFetch(watch.channelId || VINTED_SETTINGS.defaultChannelId || DEFAULT_VINTED_CHANNEL_ID);
-  if (!channel) return;
-
-  const title = item?.title || "Nowa oferta Vinted";
-  const price = itemPriceToText(item);
-  const url = vintedItemUrl(item);
-  const img = vintedItemImage(item);
-
-  const embed = new EmbedBuilder()
-    .setTitle(title)
-    .setURL(url)
-    .setColor(getEmbedColor())
-    .setDescription(
-      `🛍 **NOWA OFERTA VINTED**\n\n` +
-      `💰 Cena: **${price}**\n` +
-      `🔎 Obserwacja: **${watch.name}**\n` +
-      `🔤 Fraza: \`${watch.query}\`\n` +
-      `💸 Filtr ceny: **${watch.minPrice ?? "0"} - ${watch.maxPrice ?? "bez limitu"} zł**\n` +
-      `📂 Kategoria: **${watch.category || "dowolna"}**`
-    )
-    .addFields(
-      { name: "Link", value: `[Otwórz Vinted](${url})`, inline: false }
-    )
-    .setTimestamp();
-
-  if (img) embed.setThumbnail(img);
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setLabel("OTWÓRZ VINTED")
-      .setStyle(ButtonStyle.Link)
-      .setURL(url)
-  );
-
-  queueSend(() => channel.send({
-    content: `🛍 **Nowa oferta Vinted:** ${title}`,
-    embeds: [embed],
-    components: [row]
-  }));
-}
-
-async function bootstrapVintedWatch(watch) {
-  try {
-    const items = await fetchVintedItems(watch);
-    for (const item of items) {
-      VINTED_SEEN.add(`vinted:${watch.id}:${vintedItemId(item)}`);
-    }
-    saveVintedAll();
-    return items.length;
-  } catch (err) {
-    error(`[Vinted] Bootstrap error (${watch.name}):`, err?.message || err);
-    return 0;
-  }
-}
-
-async function checkVintedWatch(watch, sendAlerts = true) {
-  if (!watch.enabled) return { found: 0, newItems: 0 };
-
-  const items = await fetchVintedItems(watch);
-  let newItems = 0;
-
-  for (const item of items) {
-    const key = `vinted:${watch.id}:${vintedItemId(item)}`;
-
-    if (VINTED_SEEN.has(key)) continue;
-
-    VINTED_SEEN.add(key);
-    newItems++;
-
-    if (sendAlerts) {
-      await sendVintedAlert(watch, item);
-    }
-  }
-
-  saveVintedAll();
-
-  return { found: items.length, newItems };
-}
-
-async function runVintedCheck(sendAlerts = true) {
-  if (!VINTED_SETTINGS.enabled) {
-    log("[Vinted] Wyłączone — pomijam check.");
-    return { totalFound: 0, totalNew: 0 };
-  }
-
-  let totalFound = 0;
-  let totalNew = 0;
-
-  for (const rawWatch of VINTED_WATCH) {
-    const watch = normalizeVintedWatch(rawWatch);
-
-    try {
-      const result = await checkVintedWatch(watch, sendAlerts);
-      totalFound += result.found;
-      totalNew += result.newItems;
-    } catch (err) {
-      error(`[Vinted] Błąd obserwacji ${watch.name}:`, err?.message || err);
-    }
-  }
-
-  log(`[Vinted] Check done. Found: ${totalFound}, new: ${totalNew}, alerts: ${sendAlerts}`);
-
-  return { totalFound, totalNew };
-}
-
-let vintedLoopStarted = false;
-
-function startVintedLoop() {
-  if (vintedLoopStarted) return;
-  vintedLoopStarted = true;
-
-  const loop = async () => {
-    try {
-      const firstRun = VINTED_SETTINGS.firstRunDone !== true;
-
-      if (firstRun) {
-        log("[Vinted] Pierwszy start — zapisuję aktualne oferty bez wysyłania spamu.");
-        await runVintedCheck(false);
-        VINTED_SETTINGS.firstRunDone = true;
-        saveVintedAll();
-      } else {
-        await runVintedCheck(true);
-      }
-    } catch (err) {
-      error("[Vinted] Loop error:", err?.message || err);
-    }
-
-    const delay =
-      typeof VINTED_SETTINGS.intervalMs === "number" && VINTED_SETTINGS.intervalMs >= 60000
-        ? VINTED_SETTINGS.intervalMs
-        : 5 * 60 * 1000;
-
-    setTimeout(loop, delay);
-  };
-
-  setTimeout(loop, 25000);
-}
 
 // =====================================
 // EMBEDY
@@ -1313,8 +1033,6 @@ function buildAdminMainEmbed() {
       "Sterowanie botem z poziomu Discorda.\n\n" +
       `Tryb: **${SETTINGS.mode.toUpperCase()}**\n` +
       `Heartbeat: **${SETTINGS.heartbeat ? "ON" : "OFF"}** co **${formatMs(SETTINGS.heartbeatInterval)}**\n` +
-      `Vinted: **${VINTED_SETTINGS.enabled ? "ON" : "OFF"}** co **${formatMs(VINTED_SETTINGS.intervalMs)}**\n` +
-      `Vinted obserwacje: **${VINTED_WATCH.length}**\n` +
       `Kolor embedów: **${intToHex(getEmbedColor())}**\n` +
       `Produkty w pamięci: **${seenProducts.size}**\n` +
       `Ostatni check: **${new Date(lastMonitorTime).toLocaleString("pl-PL")}**`
@@ -1326,7 +1044,6 @@ function buildAdminMainRows() {
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("panel_monitor").setLabel("MONITOR").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("panel_vinted").setLabel("VINTED").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId("panel_heartbeat").setLabel("HEARTBEAT").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId("panel_mode").setLabel("MODE").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("panel_status").setLabel("STATUS").setStyle(ButtonStyle.Secondary)
@@ -1408,56 +1125,6 @@ function makeTwoInputModal(customId, title, aId, aLabel, aPlaceholder, bId, bLab
   return modal;
 }
 
-function makeVintedAddModal() {
-  const modal = new ModalBuilder()
-    .setCustomId("modal_vinted_add")
-    .setTitle("Dodaj obserwację Vinted");
-
-  const query = new TextInputBuilder()
-    .setCustomId("query")
-    .setLabel("Czego szukać?")
-    .setPlaceholder("midnights taylor swift vinyl")
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true);
-
-  const maxPrice = new TextInputBuilder()
-    .setCustomId("maxPrice")
-    .setLabel("Cena maksymalna")
-    .setPlaceholder("np. 200 albo zostaw puste")
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false);
-
-  const minPrice = new TextInputBuilder()
-    .setCustomId("minPrice")
-    .setLabel("Cena minimalna")
-    .setPlaceholder("np. 50 albo zostaw puste")
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false);
-
-  const category = new TextInputBuilder()
-    .setCustomId("category")
-    .setLabel("Kategoria / słowo dodatkowe")
-    .setPlaceholder("np. winyl, vinyl, płyta albo zostaw puste")
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false);
-
-  const channelId = new TextInputBuilder()
-    .setCustomId("channelId")
-    .setLabel("Kanał alertów ID")
-    .setPlaceholder(VINTED_SETTINGS.defaultChannelId || DEFAULT_VINTED_CHANNEL_ID)
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false);
-
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(query),
-    new ActionRowBuilder().addComponents(maxPrice),
-    new ActionRowBuilder().addComponents(minPrice),
-    new ActionRowBuilder().addComponents(category),
-    new ActionRowBuilder().addComponents(channelId)
-  );
-
-  return modal;
-}
 
 // =====================================
 // PANELE
@@ -1533,51 +1200,6 @@ async function showMonitorPanel(interaction) {
   return interaction.update({ embeds: [embed], components: rows, ephemeral: true });
 }
 
-async function showVintedPanel(interaction) {
-  const watches = VINTED_WATCH.map(normalizeVintedWatch);
-
-  const list = watches.length
-    ? watches.slice(0, 10).map((w, i) =>
-      `**${i + 1}. ${w.name}**\n` +
-      `Fraza: \`${w.query}\`\n` +
-      `Cena: ${w.minPrice ?? "0"} - ${w.maxPrice ?? "bez limitu"} zł\n` +
-      `Kanał: <#${w.channelId}>\n` +
-      `Status: ${w.enabled ? "🟢 ON" : "🔴 OFF"}`
-    ).join("\n\n")
-    : "Brak obserwacji. Kliknij **DODAJ OBSERWACJĘ**.";
-
-  const embed = new EmbedBuilder()
-    .setTitle("🛍 VINTED PANEL")
-    .setColor(getEmbedColor())
-    .setDescription(
-      `Status Vinted: **${VINTED_SETTINGS.enabled ? "ON" : "OFF"}**\n` +
-      `Co ile sprawdza: **${formatMs(VINTED_SETTINGS.intervalMs)}**\n` +
-      `Domyślny kanał: <#${VINTED_SETTINGS.defaultChannelId}>\n` +
-      `Liczba obserwacji: **${watches.length}**\n\n` +
-      list
-    );
-
-  const rows = [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("vinted_add").setLabel("➕ DODAJ OBSERWACJĘ").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("vinted_list").setLabel("👀 MOJE OBSERWACJE").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("vinted_remove").setLabel("🗑 USUŃ").setStyle(ButtonStyle.Danger)
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("vinted_on").setLabel("🟢 WŁĄCZ").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("vinted_off").setLabel("🔴 WYŁĄCZ").setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId("vinted_interval").setLabel("⏱ CO ILE").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("vinted_channel").setLabel("📢 KANAŁ").setStyle(ButtonStyle.Primary)
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("vinted_check").setLabel("🔎 SPRAWDŹ TERAZ").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("vinted_reset_first").setLabel("♻️ RESET START").setStyle(ButtonStyle.Secondary)
-    ),
-    buildBackRow()
-  ];
-
-  return interaction.update({ embeds: [embed], components: rows, ephemeral: true });
-}
 
 async function showEmbedPanel(interaction) {
   const embed = new EmbedBuilder()
@@ -1775,8 +1397,6 @@ async function showConfigPanel(interaction) {
       `Check interval: **${CHECK_INTERVAL_MINUTES} min**\n` +
       `Mode: **${SETTINGS.mode}**\n` +
       `Heartbeat: **${SETTINGS.heartbeat ? "ON" : "OFF"} / ${formatMs(SETTINGS.heartbeatInterval)}**\n` +
-      `Vinted: **${VINTED_SETTINGS.enabled ? "ON" : "OFF"} / ${formatMs(VINTED_SETTINGS.intervalMs)}**\n` +
-      `Vinted channel: <#${VINTED_SETTINGS.defaultChannelId}>\n` +
       `Embed color: **${intToHex(getEmbedColor())}**\n` +
       `Artists: **${Object.keys(ARTISTS).length}**\n` +
       `Keywords: **${SPECIAL_KEYWORDS.length}**`
@@ -1841,77 +1461,6 @@ const commands = [
   new SlashCommandBuilder()
     .setName("adminpanel")
     .setDescription("Interaktywny panel admina PRO z przyciskami")
-    .setContexts(InteractionContextType.Guild),
-
-  new SlashCommandBuilder()
-    .setName("vinted_obserwuj")
-    .setDescription("Dodaj rzecz, której bot ma szukać na Vinted")
-    .addStringOption(o =>
-      o.setName("szukaj")
-        .setDescription("Czego szukać, np. midnights taylor swift vinyl")
-        .setRequired(true)
-    )
-    .addNumberOption(o =>
-      o.setName("cena_do")
-        .setDescription("Cena maksymalna, np. 200")
-        .setRequired(false)
-    )
-    .addNumberOption(o =>
-      o.setName("cena_od")
-        .setDescription("Cena minimalna, np. 50")
-        .setRequired(false)
-    )
-    .addStringOption(o =>
-      o.setName("kategoria")
-        .setDescription("Dodatkowe słowo/kategoria, np. winyl")
-        .setRequired(false)
-    )
-    .addChannelOption(o =>
-      o.setName("kanal")
-        .setDescription("Kanał alertów, opcjonalnie")
-        .addChannelTypes(ChannelType.GuildText)
-        .setRequired(false)
-    )
-    .setContexts(InteractionContextType.Guild),
-
-  new SlashCommandBuilder()
-    .setName("vinted_moje")
-    .setDescription("Pokaż obserwowane rzeczy z Vinted")
-    .setContexts(InteractionContextType.Guild),
-
-  new SlashCommandBuilder()
-    .setName("vinted_usun")
-    .setDescription("Usuń obserwację Vinted po numerze z listy")
-    .addIntegerOption(o =>
-      o.setName("numer")
-        .setDescription("Numer obserwacji z /vinted_moje")
-        .setRequired(true)
-    )
-    .setContexts(InteractionContextType.Guild),
-
-  new SlashCommandBuilder()
-    .setName("vinted_wlacz")
-    .setDescription("Włącz alerty Vinted")
-    .setContexts(InteractionContextType.Guild),
-
-  new SlashCommandBuilder()
-    .setName("vinted_wylacz")
-    .setDescription("Wyłącz alerty Vinted")
-    .setContexts(InteractionContextType.Guild),
-
-  new SlashCommandBuilder()
-    .setName("vinted_co_ile")
-    .setDescription("Ustaw jak często bot sprawdza Vinted")
-    .addStringOption(o =>
-      o.setName("czas")
-        .setDescription("Np. 5m, 10m, 1h")
-        .setRequired(true)
-    )
-    .setContexts(InteractionContextType.Guild),
-
-  new SlashCommandBuilder()
-    .setName("vinted_sprawdz")
-    .setDescription("Sprawdź Vinted teraz")
     .setContexts(InteractionContextType.Guild),
 
   new SlashCommandBuilder()
@@ -2144,7 +1693,6 @@ async function sendHeartbeatReport() {
       `📦 Produkty w pamięci: ${seenProducts.size}\n` +
       `📦 Aktywne produkty: ${lastActive.size}\n` +
       `💰 Ceny: ${Object.keys(trackedPrices).length}\n` +
-      `🛍 Vinted: ${VINTED_SETTINGS.enabled ? "ON" : "OFF"} / ${VINTED_WATCH.length} obserwacji\n` +
       `🎨 Embed color: ${intToHex(getEmbedColor())}\n` +
       `🕒 Ostatni check: ${new Date(lastMonitorTime).toLocaleString("pl-PL")}\n` +
       `⏳ Interwał raportu: ${formatMs(SETTINGS.heartbeatInterval)}`
@@ -2182,7 +1730,7 @@ client.once(Events.ClientReady, async (ready) => {
 
   setTimeout(() => {
     try {
-      ready.user.setActivity("MusicDrop.pl + Vinted", {
+      ready.user.setActivity("MusicDrop.pl — Music Monitor", {
         type: ActivityType.Watching
       });
     } catch (err) {
@@ -2203,7 +1751,6 @@ client.once(Events.ClientReady, async (ready) => {
   }
 
   startHeartbeatLoop();
-  startVintedLoop();
 });
 
 // =====================================
@@ -2215,90 +1762,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isModalSubmit()) {
       if (!isAdminUser(interaction)) return adminOnlyReply(interaction);
 
-      if (interaction.customId === "modal_vinted_add") {
-        const query = interaction.fields.getTextInputValue("query").trim();
-        const maxPrice = parseNumberMaybe(interaction.fields.getTextInputValue("maxPrice").trim());
-        const minPrice = parseNumberMaybe(interaction.fields.getTextInputValue("minPrice").trim());
-        const category = interaction.fields.getTextInputValue("category").trim();
-        const channelIdRaw = interaction.fields.getTextInputValue("channelId").trim();
-
-        const watch = normalizeVintedWatch({
-          id: Date.now(),
-          name: query,
-          query,
-          minPrice,
-          maxPrice,
-          category,
-          channelId: channelIdRaw || VINTED_SETTINGS.defaultChannelId || DEFAULT_VINTED_CHANNEL_ID,
-          enabled: true
-        });
-
-        VINTED_WATCH.push(watch);
-        saveVintedAll();
-
-        await interaction.deferReply({ ephemeral: true });
-        const count = await bootstrapVintedWatch(watch);
-
-        return interaction.editReply(
-          `✅ Dodano obserwację Vinted: **${watch.name}**\n` +
-          `🔎 Fraza: \`${watch.query}\`\n` +
-          `💰 Cena: ${watch.minPrice ?? "0"} - ${watch.maxPrice ?? "bez limitu"} zł\n` +
-          `📢 Kanał: <#${watch.channelId}>\n\n` +
-          `Zapisano ${count} obecnych ofert jako widziane, więc bot nie wyśle starych ogłoszeń.`
-        );
-      }
-
-      if (interaction.customId === "modal_vinted_remove") {
-        const num = parseInt(interaction.fields.getTextInputValue("number").trim(), 10);
-
-        if (Number.isNaN(num) || num < 1 || num > VINTED_WATCH.length) {
-          return interaction.reply({ content: "❌ Niepoprawny numer obserwacji.", ephemeral: true });
-        }
-
-        const removed = VINTED_WATCH.splice(num - 1, 1)[0];
-        saveVintedAll();
-
-        return interaction.reply({
-          content: `🗑 Usunięto obserwację Vinted: **${removed.name || removed.query}**`,
-          ephemeral: true
-        });
-      }
-
-      if (interaction.customId === "modal_vinted_interval") {
-        const value = interaction.fields.getTextInputValue("czas").trim();
-        const ms = parseTimeText(value);
-
-        if (!ms) {
-          return interaction.reply({
-            content: "❌ Podaj poprawny czas, np. `5m`, `10m`, `1h`.",
-            ephemeral: true
-          });
-        }
-
-        VINTED_SETTINGS.intervalMs = ms;
-        saveVintedAll();
-
-        return interaction.reply({
-          content: `✅ Vinted będzie sprawdzany co **${value}**.`,
-          ephemeral: true
-        });
-      }
-
-      if (interaction.customId === "modal_vinted_channel") {
-        const channelId = interaction.fields.getTextInputValue("channelId").trim();
-
-        if (!channelId) {
-          return interaction.reply({ content: "❌ Podaj ID kanału.", ephemeral: true });
-        }
-
-        VINTED_SETTINGS.defaultChannelId = channelId;
-        saveVintedAll();
-
-        return interaction.reply({
-          content: `✅ Domyślny kanał Vinted ustawiony na <#${channelId}>.`,
-          ephemeral: true
-        });
-      }
 
       if (interaction.customId === "modal_heartbeat_time") {
         const value = interaction.fields.getTextInputValue("czas");
@@ -2447,7 +1910,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (id === "panel_back") return sendAdminMain(interaction, true);
 
       if (id === "panel_monitor") return showMonitorPanel(interaction);
-      if (id === "panel_vinted") return showVintedPanel(interaction);
       if (id === "panel_heartbeat") return showHeartbeatPanel(interaction);
       if (id === "panel_mode") return showModePanel(interaction);
       if (id === "panel_embed") return showEmbedPanel(interaction);
@@ -2459,56 +1921,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (id === "panel_config") return showConfigPanel(interaction);
       if (id === "panel_clear") return showClearPanel(interaction);
 
-      if (id === "vinted_add") {
-        return interaction.showModal(makeVintedAddModal());
-      }
-
-      if (id === "vinted_list") {
-        const list = VINTED_WATCH.length
-          ? VINTED_WATCH.map((w, i) => {
-            const watch = normalizeVintedWatch(w);
-            return `${i + 1}. **${watch.name}** — \`${watch.query}\` — ${watch.minPrice ?? "0"}-${watch.maxPrice ?? "bez limitu"} zł — <#${watch.channelId}>`;
-          }).join("\n")
-          : "Brak obserwacji.";
-
-        return interaction.reply({ content: "🛍 Twoje obserwacje Vinted:\n" + list, ephemeral: true });
-      }
-
-      if (id === "vinted_remove") {
-        return interaction.showModal(makeModal("modal_vinted_remove", "Usuń obserwację Vinted", "number", "Numer z listy", "1"));
-      }
-
-      if (id === "vinted_on") {
-        VINTED_SETTINGS.enabled = true;
-        saveVintedAll();
-        return showVintedPanel(interaction);
-      }
-
-      if (id === "vinted_off") {
-        VINTED_SETTINGS.enabled = false;
-        saveVintedAll();
-        return showVintedPanel(interaction);
-      }
-
-      if (id === "vinted_interval") {
-        return interaction.showModal(makeModal("modal_vinted_interval", "Co ile sprawdzać Vinted", "czas", "Czas, np. 5m, 10m, 1h", "5m"));
-      }
-
-      if (id === "vinted_channel") {
-        return interaction.showModal(makeModal("modal_vinted_channel", "Kanał alertów Vinted", "channelId", "ID kanału", VINTED_SETTINGS.defaultChannelId || DEFAULT_VINTED_CHANNEL_ID));
-      }
-
-      if (id === "vinted_check") {
-        await interaction.deferReply({ ephemeral: true });
-        const result = await runVintedCheck(true);
-        return interaction.editReply(`🔎 Sprawdzono Vinted.\nZnalezione: ${result?.totalFound ?? 0}\nNowe: ${result?.totalNew ?? 0}`);
-      }
-
-      if (id === "vinted_reset_first") {
-        VINTED_SETTINGS.firstRunDone = false;
-        saveVintedAll();
-        return interaction.reply({ content: "♻️ Reset startu Vinted ustawiony. Następny check zapisze aktualne oferty bez spamu.", ephemeral: true });
-      }
 
       if (id.startsWith("color_")) {
         const colorId = id.replace("color_", "");
@@ -2530,7 +1942,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             `• Seen: ${seenProducts.size}\n` +
             `• Active: ${lastActive.size}\n` +
             `• Prices: ${Object.keys(trackedPrices).length}\n` +
-            `• Vinted: ${VINTED_SETTINGS.enabled ? "ON" : "OFF"} / ${VINTED_WATCH.length} obserwacji / ${formatMs(VINTED_SETTINGS.intervalMs)}\n` +
             `• Heartbeat: ${SETTINGS.heartbeat ? "ON" : "OFF"} (${formatMs(SETTINGS.heartbeatInterval)})\n` +
             `• Embed color: ${intToHex(getEmbedColor())}\n` +
             `• Last monitor: ${new Date(lastMonitorTime).toLocaleString("pl-PL")}\n` +
@@ -2541,9 +1952,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       if (id === "panel_help") {
         return interaction.reply({
-          content:
-            "📖 Użyj `/help`, żeby zobaczyć pełną listę komend.\n" +
-            "W panelu masz też wszystkie główne funkcje jako przyciski: monitor, Vinted, heartbeat, mode, embed, colors, keywords, priority role, history, config i clear.",
+          content: "📖 Użyj `/help`, żeby zobaczyć pełną listę komend.",
           ephemeral: true
         });
       }
@@ -2556,9 +1965,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         SETTINGS = loadJSON(FILE_SETTINGS, SETTINGS);
         ARTISTS = loadJSON(FILE_ARTISTS, ARTISTS);
         SPECIAL_KEYWORDS = loadJSON(FILE_KEYWORDS, SPECIAL_KEYWORDS);
-        VINTED_SETTINGS = loadJSON(FILE_VINTED_SETTINGS, VINTED_SETTINGS);
-        VINTED_WATCH = loadJSON(FILE_VINTED_WATCH, []);
-        VINTED_SEEN = new Set(loadJSON(FILE_VINTED_SEEN, []));
 
         return interaction.reply({ content: "🔄 Przeładowano konfigurację.", ephemeral: true });
       }
@@ -2716,18 +2122,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setDescription("Pełna lista dostępnych komend bota.")
         .addFields(
           {
-            name: "🛍 Vinted",
-            value:
-              "`/vinted_obserwuj` — dodaj rzecz, której bot ma szukać\n" +
-              "`/vinted_moje` — pokaż obserwowane rzeczy\n" +
-              "`/vinted_usun` — usuń obserwację\n" +
-              "`/vinted_wlacz` — włącz alerty Vinted\n" +
-              "`/vinted_wylacz` — wyłącz alerty Vinted\n" +
-              "`/vinted_co_ile` — ustaw jak często sprawdzać\n" +
-              "`/vinted_sprawdz` — sprawdź teraz\n\n" +
-              "Panel: `/adminpanel` → VINTED"
-          },
-          {
             name: "🟢 Status bota",
             value:
               "`/ping` — sprawdza czy bot odpowiada\n" +
@@ -2795,130 +2189,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return sendAdminMain(interaction, false);
     }
 
-    if (commandName === "vinted_obserwuj") {
-      if (!isAdminUser(interaction)) return adminOnlyReply(interaction);
-
-      const query = interaction.options.getString("szukaj");
-      const maxPrice = interaction.options.getNumber("cena_do");
-      const minPrice = interaction.options.getNumber("cena_od");
-      const category = interaction.options.getString("kategoria") || "";
-      const channel = interaction.options.getChannel("kanal");
-
-      const watch = normalizeVintedWatch({
-        id: Date.now(),
-        name: query,
-        query,
-        minPrice,
-        maxPrice,
-        category,
-        channelId: channel?.id || VINTED_SETTINGS.defaultChannelId || DEFAULT_VINTED_CHANNEL_ID,
-        enabled: true
-      });
-
-      VINTED_WATCH.push(watch);
-      saveVintedAll();
-
-      await interaction.deferReply({ ephemeral: true });
-      const count = await bootstrapVintedWatch(watch);
-
-      return interaction.editReply(
-        `✅ Dodano obserwację Vinted: **${watch.name}**\n` +
-        `🔎 Fraza: \`${watch.query}\`\n` +
-        `💰 Cena: ${watch.minPrice ?? "0"} - ${watch.maxPrice ?? "bez limitu"} zł\n` +
-        `📂 Kategoria: ${watch.category || "dowolna"}\n` +
-        `📢 Kanał: <#${watch.channelId}>\n\n` +
-        `Zapisano ${count} obecnych ofert jako widziane, więc bot nie wyśle starych ogłoszeń.`
-      );
-    }
-
-    if (commandName === "vinted_moje") {
-      if (!isAdminUser(interaction)) return adminOnlyReply(interaction);
-
-      const list = VINTED_WATCH.length
-        ? VINTED_WATCH.map((w, i) => {
-          const watch = normalizeVintedWatch(w);
-          return `${i + 1}. **${watch.name}**\n` +
-            `Fraza: \`${watch.query}\`\n` +
-            `Cena: ${watch.minPrice ?? "0"} - ${watch.maxPrice ?? "bez limitu"} zł\n` +
-            `Kategoria: ${watch.category || "dowolna"}\n` +
-            `Kanał: <#${watch.channelId}>\n` +
-            `Status: ${watch.enabled ? "🟢 ON" : "🔴 OFF"}`;
-        }).join("\n\n")
-        : "Brak obserwacji.";
-
-      return interaction.reply({
-        content: "🛍 **Obserwacje Vinted:**\n\n" + list,
-        ephemeral: true
-      });
-    }
-
-    if (commandName === "vinted_usun") {
-      if (!isAdminUser(interaction)) return adminOnlyReply(interaction);
-
-      const num = interaction.options.getInteger("numer");
-
-      if (num < 1 || num > VINTED_WATCH.length) {
-        return interaction.reply({ content: "❌ Niepoprawny numer obserwacji.", ephemeral: true });
-      }
-
-      const removed = VINTED_WATCH.splice(num - 1, 1)[0];
-      saveVintedAll();
-
-      return interaction.reply({
-        content: `🗑 Usunięto obserwację: **${removed.name || removed.query}**`,
-        ephemeral: true
-      });
-    }
-
-    if (commandName === "vinted_wlacz") {
-      if (!isAdminUser(interaction)) return adminOnlyReply(interaction);
-
-      VINTED_SETTINGS.enabled = true;
-      saveVintedAll();
-
-      return interaction.reply("🟢 Alerty Vinted włączone.");
-    }
-
-    if (commandName === "vinted_wylacz") {
-      if (!isAdminUser(interaction)) return adminOnlyReply(interaction);
-
-      VINTED_SETTINGS.enabled = false;
-      saveVintedAll();
-
-      return interaction.reply("🔴 Alerty Vinted wyłączone.");
-    }
-
-    if (commandName === "vinted_co_ile") {
-      if (!isAdminUser(interaction)) return adminOnlyReply(interaction);
-
-      const czas = interaction.options.getString("czas");
-      const ms = parseTimeText(czas);
-
-      if (!ms) {
-        return interaction.reply({
-          content: "❌ Podaj poprawny czas, np. `5m`, `10m`, `1h`.",
-          ephemeral: true
-        });
-      }
-
-      VINTED_SETTINGS.intervalMs = ms;
-      saveVintedAll();
-
-      return interaction.reply(`⏱ Vinted będzie sprawdzany co **${czas}**.`);
-    }
-
-    if (commandName === "vinted_sprawdz") {
-      if (!isAdminUser(interaction)) return adminOnlyReply(interaction);
-
-      await interaction.deferReply({ ephemeral: true });
-      const result = await runVintedCheck(true);
-
-      return interaction.editReply(
-        `🔎 Sprawdzono Vinted.\n` +
-        `Znalezione: **${result?.totalFound ?? 0}**\n` +
-        `Nowe: **${result?.totalNew ?? 0}**`
-      );
-    }
 
     if (commandName === "mode") {
       if (!isAdminUser(interaction)) return adminOnlyReply(interaction);
@@ -3027,9 +2297,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         SETTINGS = loadJSON(FILE_SETTINGS, SETTINGS);
         ARTISTS = loadJSON(FILE_ARTISTS, ARTISTS);
         SPECIAL_KEYWORDS = loadJSON(FILE_KEYWORDS, SPECIAL_KEYWORDS);
-        VINTED_SETTINGS = loadJSON(FILE_VINTED_SETTINGS, VINTED_SETTINGS);
-        VINTED_WATCH = loadJSON(FILE_VINTED_WATCH, []);
-        VINTED_SEEN = new Set(loadJSON(FILE_VINTED_SEEN, []));
         return interaction.reply("🔄 Przeładowano konfigurację.");
       }
 
@@ -3046,7 +2313,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           `• Seen: ${seenProducts.size}\n` +
           `• Active: ${lastActive.size}\n` +
           `• Prices: ${Object.keys(trackedPrices).length}\n` +
-          `• Vinted: ${VINTED_SETTINGS.enabled ? "ON" : "OFF"} / ${VINTED_WATCH.length} obserwacji\n` +
           `• Embed color: ${intToHex(getEmbedColor())}\n` +
           `• Heartbeat: ${SETTINGS.heartbeat ? "ON" : "OFF"} (${formatMs(SETTINGS.heartbeatInterval)})`
         );
@@ -3242,8 +2508,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         `• Seen: ${seenProducts.size}\n` +
         `• Active: ${lastActive.size}\n` +
         `• Prices: ${Object.keys(trackedPrices).length}\n` +
-        `• Vinted: ${VINTED_SETTINGS.enabled ? "ON" : "OFF"} / ${VINTED_WATCH.length} obserwacji / ${formatMs(VINTED_SETTINGS.intervalMs)}\n` +
-        `• Vinted kanał: <#${VINTED_SETTINGS.defaultChannelId}>\n` +
         `• Embed color: ${intToHex(getEmbedColor())}\n` +
         `• Heartbeat: ${SETTINGS.heartbeat ? "ON" : "OFF"} (${formatMs(SETTINGS.heartbeatInterval)})\n` +
         `• Last monitor: ${new Date(lastMonitorTime).toLocaleString("pl-PL")}\n` +
@@ -3349,3 +2613,4 @@ setInterval(() => {
     runCheck(client).catch(err => error("[Watchdog] Check error:", err?.message || err));
   }
 }, 60000);
+
